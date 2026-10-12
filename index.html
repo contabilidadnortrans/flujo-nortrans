@@ -119,6 +119,15 @@ footer{max-width:1100px;margin:0 auto;padding:0 20px 30px;color:var(--muted);fon
        <button class="ghost" id="btnInfXlsx" disabled>Descargar Excel</button></p>
     <iframe id="infFrame" title="Informe de pagos a proveedores" style="width:100%;height:900px;border:1px solid var(--line);border-radius:8px;display:none;background:#fff"></iframe>
   </section>
+  <section id="secDif">
+    <h2><span class="step">5</span>Explicación de grandes diferencias</h2>
+    <p class="help">Explica las líneas del cuadro comparativo que más cambiaron contra el mes anterior, con el detalle de las hojas del flujo (y del libro de ventas si lo subiste). Agrega tu explicación en cada una: se guarda en este navegador y sale en el informe.</p>
+    <div class="row" style="margin-bottom:12px"><div style="max-width:320px"><label for="difUmbral">Explicar diferencias desde ($)</label><input type="number" id="difUmbral" step="1000000" value="10000000"></div></div>
+    <div id="difList"></div>
+    <p><button class="primary" id="btnDifHtml" disabled>Descargar informe (.html)</button>
+       <button class="ghost" id="btnDifPrint" disabled>Imprimir / guardar PDF</button></p>
+    <iframe id="difFrame" title="Explicación de diferencias" style="width:1px;height:1px;border:0;position:absolute;left:-9999px"></iframe>
+  </section>
 </main>
 <footer>Genera las 21 láminas con el formato Nortrans. Las láminas 3 y 4 quedan con el título para pegar los pantallazos del flujo real.</footer>
 
@@ -442,7 +451,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const k = RUT_CLIENTE[rut] || String(c[ix("Razon Social")]).trim();
       const e = out[k] || (out[k] = { nombre: String(c[ix("Razon Social")]).trim(), monto: 0, docs: [] });
       e.monto += monto;
-      e.docs.push({ tipo, folio: c[ix("Folio")], monto });
+      e.docs.push({ tipo, folio: c[ix("Folio")], monto, fecha: c[ix("Fecha Docto")], ref: c[ix("Folio Docto. Referencia")] });
     }
     return out;
   }
@@ -537,7 +546,152 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     };
   }
 
-  const api = { informeProveedores, MESES, FONDOS_DEFAULT, RC_DEFAULT, SEDES, extract, availableMonths, parseRCV, factoringTable, toDate, fmt, num };
+
+  // ---- explicación de grandes diferencias (mes vs mes anterior)
+  const MES_RE = /\b(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|SETIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE|ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|SEPT|OCT|NOV|DIC)\b[- ]?(\d{2,4})?/g;
+  function keyLabel(t) {
+    return String(t || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(MES_RE, " ").replace(/\b20\d{2}\b/g, " ").replace(/\bINTERESES\b/g, "INTERES").replace(/\s+/g, " ").trim();
+  }
+  // fuentes de detalle por línea del cuadro: [hoja, colEtiqueta(s), colMonto, colFecha, filtro]
+  const DET = {
+    "Arriendos": ["Arriendos", [1], 3, 4],
+    "Cheques": ["Cheques", [1], 3, 4],
+    "Combustible Nortrans": ["Combustible", [1], 3, 4],
+    "Finiquitos": ["Finiquitos", [0], 2, 4],
+    "Gastos Generales": ["Gastos generales", [1], 3, 4],
+    "Impuestos Iva Nortrans-Tamaf": ["Impuestos", [1], 3, 4, null, [2]],
+    "Leasing": ["Leasing", [0], 4, 5],
+    "Ordenes de Compra": ["ORDENES DE COMPRAS", [1], 4, 2, null, [9]],
+    "Proveedores": ["Proveedores", [1], 3, 4],
+    "Remuneraciones": ["Remuneraciones", [1], 3, 4, (r) => !/IMPOSICION/i.test(String(r[1]))],
+    "Imposiciones": ["Remuneraciones", [1], 3, 4, (r) => /IMPOSICION/i.test(String(r[1]))],
+    "Asesorías": ["Asesorias", [1], 3, 4],
+    "Gastos Bancarios": ["Gastos Bancarios", [1], 3, 4],
+    "Seguro Equipos": ["Seguros", [1], 3, 4, (r) => !/VIDA CAMARA|BICE/i.test(String(r[1]))],
+    "Seguro Personas": ["Seguros", [1], 3, 4, (r) => /VIDA CAMARA|BICE/i.test(String(r[1]))],
+    "Devolucion Prestamo Directorio": ["Directorio", [1], 3, 4, (r) => !/APORTE|RETIRO/i.test(String(r[1]))],
+    "Aporte Directorio": ["Directorio", [1], 3, 4, (r) => /APORTE/i.test(String(r[1]))],
+    "Retiro Don Eleno Challapa": ["Directorio", [1], 3, 4, (r) => /RETIRO/i.test(String(r[1]))],
+  };
+  // línea del cuadro -> fila del FLUJO DE CAJA (para el detalle por día)
+  const FLUJO_KEY = {
+    "Aramark": "ARAMARK", "CMCC": "CMCC", "Komatsu CMLB": "KOMATSU", "Lomas Bayas": "LOMAS BAYAS", "Mantos Group": "MANTOS GROUP",
+    "MEL": "MINERA ESCONDIDA", "Sodexo": "SODEXO", "Spence Externo": "SPENCE EXTERNO", "Spence Interno": "SPENCE INTERNO",
+    "Ingresos No Operacionales": "INGRESOS VARIOS", "Dev Fondo X Rendir": "DEVOLUCIONES F X RENDIR",
+    "Remuneraciones Rechazadas": "REMUNERACIONES RECHAZADAS", "Prestamo Directorio": "PRESTAMO DIRECTORIO",
+    "Leasing DINT": "LEASING DINT", "Gastos Compartidos DINT": "GASTOS COMPARTIDO DINT", "Egresos Varios": "EGRESOS VARIOS",
+  };
+  const RCV_KEY = { "Aramark": "Aramark", "Lomas Bayas": "Lomas Bayas", "Mantos Group": "Mantos Group", "MEL": "MEL",
+    "Sodexo": "Sodexo", "Spence Externo": "SPENCE", "Spence Interno": "SPENCE" };
+
+  function flujoDias(F, y, m, key, egreso) {
+    const [hdr, a, b] = egreso ? [23, 24, 42] : [2, 3, 20];
+    let row = null;
+    for (let r = a; r <= b; r++) if (String((F[r] || [])[10] || "").trim().toUpperCase() === key) row = F[r];
+    if (!row) return [];
+    const out = [];
+    (F[hdr] || []).forEach((v, c) => { if (c > 10 && inMonth(v, y, m)) { const x = num(row[c]); if (x) out.push([toDate(v), x]); } });
+    return out;
+  }
+  function detalle(wb, cache, spec, y, m) {
+    const [hoja, cl, cm, cf, filt, extra] = spec;
+    if (!cache[hoja]) { try { cache[hoja] = sheet(wb, hoja); } catch (e) { cache[hoja] = []; } }
+    const agg = new Map();
+    for (const r of rowsIn(cache[hoja], cf, y, m)) {
+      if (filt && !filt(r)) continue;
+      const v = num(r[cm]); if (!v) continue;
+      const lab = cl.map((c) => String(r[c] || "").trim()).join(" ").trim() || "(sin nombre)";
+      const k = keyLabel(lab);
+      const e = agg.get(k) || { key: k, text: lab, monto: 0, n: 0, extra: new Set() };
+      e.monto += v; e.n++;
+      if (extra) extra.forEach((c) => { const t = String(r[c] || "").replace(/\s+/g, " ").trim(); if (t) e.extra.add(t.length > 70 ? t.slice(0, 67) + "..." : t); });
+      agg.set(k, e);
+    }
+    return agg;
+  }
+  function explicarDiferencias(wb, d, opts) {
+    opts = opts || {};
+    const umbral = opts.umbral == null ? 10000000 : opts.umbral;
+    const F = sheet(wb, "FLUJO DE CAJA");
+    const pm = d.m > 1 ? d.m - 1 : 12, py = d.m > 1 ? d.y : d.y - 1;
+    const cache = {};
+    const out = [];
+    const lines = [];
+    d.ing.forEach(([sec, items], i) => { const pmap = Object.fromEntries(d.ingPrev[i][1]); items.forEach(([n, v]) => lines.push(["Ingresos", sec, n, v, pmap[n] || 0])); });
+    d.egr.forEach(([sec, items], i) => { const pmap = Object.fromEntries(d.egrPrev[i][1]); items.forEach(([n, v]) => lines.push(["Egresos", sec, n, v, pmap[n] || 0])); });
+    const fm = (v) => "$" + fmt(Math.abs(v));
+    for (const [tipo, sec, linea, mes, ant] of lines) {
+      const dif = mes - ant;
+      const p = ant ? (dif / Math.abs(ant)) * 100 : null;
+      if (!(Math.abs(dif) >= umbral || (Math.abs(dif) >= umbral * 0.3 && p !== null && Math.abs(p) >= 50))) continue;
+      const it = { tipo, sec, linea, mes, ant, dif, pct: p, drivers: [], dias: [], notas: [] };
+      const spec = DET[linea + (sec === "Traspasos" && linea === "Combustible Dint" ? "*" : "")] || DET[linea];
+      if (spec && !(sec === "Traspasos" && linea === "Combustible Dint")) {
+        const A = detalle(wb, cache, spec, d.y, d.m), B = detalle(wb, cache, spec, py, pm);
+        const keys = new Set([...A.keys(), ...B.keys()]);
+        it.drivers = [...keys].map((k) => {
+          const a = A.get(k), b = B.get(k);
+          return { text: (a || b).text, mes: a ? a.monto : 0, ant: b ? b.monto : 0, dif: (a ? a.monto : 0) - (b ? b.monto : 0),
+            extra: [...new Set([...(a ? a.extra : []), ...(b ? b.extra : [])])].slice(0, 2) };
+        }).filter((x) => Math.abs(x.dif) >= 1).sort((x, z) => Math.abs(z.dif) - Math.abs(x.dif));
+      }
+      const fk = FLUJO_KEY[linea];
+      if (fk) it.dias = flujoDias(F, d.y, d.m, fk, tipo === "Egresos");
+      // notas específicas
+      if (/Combustible/.test(linea)) {
+        const sug = d.warnings.find((w) => w.startsWith("SUGERENCIA") && /COPEC/.test(w));
+        if (sug) it.notas.push(`En ${d.mes.toLowerCase()} no se registró pago a COPEC en la hoja Combustible: ` + sug.replace(/^SUGERENCIA \(no aplicada\): /, ""));
+        else if (dif < 0 && /Dint/.test(linea)) it.notas.push("Sin pagos COPEC con porción DINT registrados en el mes.");
+      }
+      if (opts.rcv && RCV_KEY[linea]) {
+        const e = opts.rcv[RCV_KEY[linea]];
+        const facts = e ? e.docs.filter((x) => x.tipo !== 61) : [], ncs = e ? e.docs.filter((x) => x.tipo === 61) : [];
+        const ingresado = RCV_KEY[linea] === "SPENCE"
+          ? (Object.fromEntries(d.ing[0][1])["Spence Interno"] || 0) + (Object.fromEntries(d.ing[0][1])["Spence Externo"] || 0) : mes;
+        if (e) {
+          let t = `Libro de ventas de ${d.mes.toLowerCase()}: ${facts.length} documento(s) a ${e.nombre} por ${fm(facts.reduce((s, x) => s + x.monto, 0))}` +
+            ` (folios ${facts.map((x) => x.folio + (x.fecha ? " del " + x.fecha : "")).join(", ")})`;
+          if (ncs.length) t += `; notas de crédito ${ncs.map((x) => x.folio + (x.ref ? " que anula la factura " + x.ref : "")).join(", ")} por ${fm(ncs.reduce((s, x) => s + x.monto, 0))}`;
+          t += `. Facturado neto del mes: ${fm(e.monto)}; ingresado${RCV_KEY[linea] === "SPENCE" ? " (Spence interno + externo)" : ""}: ${fm(ingresado)}.`;
+          const gap = ingresado - e.monto;
+          if (Math.abs(gap) > 1 && Math.abs(gap) <= Math.abs(e.monto) * 0.03) t += ` La diferencia de ${fm(gap)} es menor (${(Math.abs(gap) / Math.abs(e.monto) * 100).toFixed(1).replace(".", ",")}% de lo facturado); probablemente es el descuento del factoring.`;
+          else if (linea === "Spence Externo") t = "Ver explicación en Spence Interno (el libro de ventas no separa interno y externo).";
+          else if (Math.abs(gap) > 1) t += gap > 0 ? ` Se ingresó ${fm(gap)} más de lo facturado en el mes: corresponde a facturas de meses anteriores cobradas o factorizadas en ${d.mes.toLowerCase()}.`
+            : ` Se ingresó ${fm(gap)} menos de lo facturado: parte de lo facturado en el mes se cobrará o factorizará después.`;
+          it.notas.push(t);
+        } else it.notas.push(`No hay facturas de este cliente en el libro de ventas de ${d.mes.toLowerCase()}.`);
+      }
+      if (linea === "Ingresos No Operacionales" || linea === "Egresos Varios") {
+        const otro = flujoDias(F, d.y, d.m, linea === "Egresos Varios" ? "INGRESOS VARIOS" : "EGRESOS VARIOS", linea !== "Egresos Varios");
+        const esp = it.dias.filter(([f, v]) => otro.some(([g, w]) => g.d === f.d && Math.abs(w - v) < 1));
+        if (esp.length) it.notas.push(`Movimientos espejo: ${esp.map(([f, v]) => `${f.d}/${f.m} ${fm(v)}`).join("; ")} aparecen el mismo día como ingreso varios y egreso varios (entra y sale el mismo monto); probablemente son traspasos entre cuentas que no afectan el saldo. Suman ${fm(esp.reduce((a, [, v]) => a + v, 0))}.`);
+      }
+      // texto automático
+      const verbo = tipo === "Egresos" ? (dif > 0 ? "Se pagó más" : "Se pagó menos") : (dif > 0 ? "Ingresó más" : "Ingresó menos");
+      let t = `${verbo} que en ${d.mesAnt.toLowerCase()}: ${fm(mes)} contra ${fm(ant)} (${dif > 0 ? "+" : "−"}${fm(dif)}${p === null ? "" : ", " + (p > 0 ? "+" : "") + p.toFixed(0) + "%"}).`;
+      const top = it.drivers.slice(0, 4);
+      if (top.length) {
+        const parts = top.map((x) => {
+          const ex = x.extra.length ? ` [${x.extra.join("; ")}]` : "";
+          if (!x.ant) return `${x.text}${ex}: ${fm(x.mes)} (nuevo en ${d.mes.toLowerCase()})`;
+          if (!x.mes) return `${x.text}${ex}: ${fm(x.ant)} en ${d.mesAnt.toLowerCase()} que no se repite`;
+          return `${x.text}${ex}: ${fm(x.mes)} contra ${fm(x.ant)} (${x.dif > 0 ? "+" : "−"}${fm(x.dif)})`;
+        });
+        const cov = top.reduce((s, x) => s + x.dif, 0);
+        t += ` Lo explican principalmente: ${parts.join("; ")}.`;
+        if (Math.abs(dif) > 0 && Math.abs(cov / dif) < 0.7) t += ` (Estas partidas explican ${Math.round((cov / dif) * 100)}% de la diferencia.)`;
+      } else if (it.dias.length) {
+        const dd = it.dias.slice().sort((a, b) => b[1] - a[1]).slice(0, 4);
+        t += ` Movimientos del mes: ${dd.map(([f, v]) => `${f.d}/${f.m} ${fm(v)}`).join("; ")}.`;
+      }
+      it.texto = t;
+      out.push(it);
+    }
+    return out.sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif));
+  }
+
+  const api = { explicarDiferencias, informeProveedores, MESES, FONDOS_DEFAULT, RC_DEFAULT, SEDES, extract, availableMonths, parseRCV, factoringTable, toDate, fmt, num };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.NTCore = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -1031,7 +1185,59 @@ ${tablaProv(R.sinPago, { heads: [R.mesAnt], vals: (x) => [{ t: m$(x.ant) }], bar
     return wb;
   }
 
-  const api = { buildHTML, toWorkbook, filtrar };
+
+  function buildDifHTML(items, d, opts) {
+    opts = opts || {};
+    const com = opts.comentarios || {};
+    const keyOf = (it) => `${d.y}-${d.m}|${it.tipo}|${it.sec}|${it.linea}`;
+    const fm = (v) => (v < 0 ? "−$ " : "$ ") + fmt(Math.abs(v));
+    const ing = items.filter((x) => x.tipo === "Ingresos"), egr = items.filter((x) => x.tipo === "Egresos");
+    const card = (it) => {
+      const c = (com[keyOf(it)] || "").trim();
+      const drv = it.drivers.slice(0, 8);
+      return `<div class="card"><div class="ch"><div><div class="sec">${esc(it.tipo)} · ${esc(it.sec)}</div><div class="ln">${esc(it.linea)}</div></div>
+<div class="nums"><div><span>${esc(d.mes)}</span>${fm(it.mes)}</div><div><span>${esc(d.mesAnt)}</span>${fm(it.ant)}</div><div class="${(it.tipo === "Egresos" ? -it.dif : it.dif) < 0 ? "neg" : "pos"}"><span>Diferencia</span>${fm(it.dif)}</div></div></div>
+${c ? `<div class="kc"><b>Explicación de contabilidad:</b> ${esc(c).replace(/\n/g, "<br>")}</div>` : ""}
+<p class="auto">${esc(it.texto)}</p>${it.notas.map((n) => `<p class="nota">${esc(n)}</p>`).join("")}
+${drv.length ? `<table><thead><tr><th>Partida</th><th class="n">${esc(d.mes)}</th><th class="n">${esc(d.mesAnt)}</th><th class="n">Diferencia</th></tr></thead><tbody>${drv.map((x) => `<tr><td>${esc(x.text)}${x.extra.length ? `<div class="rut">${esc(x.extra.join(" · "))}</div>` : ""}</td><td class="n">${m$(x.mes)}</td><td class="n">${m$(x.ant)}</td><td class="n ${(it.tipo === "Egresos" ? -x.dif : x.dif) < 0 ? "neg" : "pos"}">${fm(x.dif)}</td></tr>`).join("")}</tbody></table>` : ""}
+</div>`;
+    };
+    return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Explicación de diferencias · ${d.mes} ${d.y}</title><style>
+:root{--o:#EF6B00;--oi:#B04E00;--c:#404040;--t:#262626;--mu:#6b6b6b;--ln:#E4DED6;--z:#F7F1EA;--red:#A6402F;--grn:#1E7B4D}
+*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--t);font:14px/1.5 "Segoe UI",Calibri,system-ui,sans-serif}
+.top{height:6px;background:var(--o)}.wrap{max-width:1000px;margin:0 auto;padding:22px 24px 40px}
+header{display:flex;gap:16px;align-items:center;flex-wrap:wrap;border-bottom:2px solid var(--o);padding-bottom:12px}header img{height:28px}
+.eb{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--oi);font-weight:700}h1{margin:2px 0 0;font-size:24px;color:var(--c)}
+h2{font-size:17px;color:var(--c);margin:28px 0 10px;padding-left:10px;border-left:4px solid var(--o)}
+.intro{color:var(--mu);margin:12px 0 0}
+.k{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.k>div{border:1px solid var(--ln);border-radius:8px;padding:10px 12px}
+.k .l{font-size:11px;text-transform:uppercase;color:var(--mu)}.k .v{font-size:19px;font-weight:700;color:var(--c);font-variant-numeric:tabular-nums}
+.card{border:1px solid var(--ln);border-radius:10px;padding:14px 16px;margin:12px 0;break-inside:avoid}
+.ch{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--ln);padding-bottom:8px;margin-bottom:8px}
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu)}.ln{font-size:17px;font-weight:700;color:var(--c)}
+.nums{display:flex;gap:18px;font-variant-numeric:tabular-nums;font-weight:600}.nums span{display:block;font-size:11px;color:var(--mu);font-weight:400;text-transform:uppercase}
+.nums .neg{color:var(--red)}.nums .pos{color:var(--grn)}
+.kc{background:#FFF4E8;border-left:4px solid var(--o);padding:8px 10px;border-radius:6px;margin:6px 0}
+p.auto{margin:6px 0}p.nota{margin:6px 0;font-size:13px;color:#5b3d00;background:#FFF8E6;padding:6px 10px;border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:6px}
+th{background:var(--c);color:#fff;text-align:left;padding:5px 8px;font-weight:600}th.n,td.n{text-align:right;white-space:nowrap}
+td{padding:4px 8px;border-bottom:1px solid #eee}tbody tr:nth-child(even) td{background:var(--z)}td.neg{color:var(--red)}td.pos{color:var(--grn)}
+.rut{font-size:11.5px;color:var(--mu)}.note{font-size:12px;color:var(--mu);margin-top:26px;border-top:1px solid var(--ln);padding-top:10px}
+@media (max-width:720px){.k{grid-template-columns:1fr 1fr}}@media print{.wrap{padding:0}}
+</style></head><body><div class="top"></div><div class="wrap">
+<header>${opts.logo ? `<img src="${opts.logo}" alt="Nortrans">` : ""}<div><div class="eb">Contabilidad · Flujo de caja</div><h1>Explicación de las principales diferencias ${esc(d.mes)} vs ${esc(d.mesAnt)} ${d.y}</h1></div></header>
+<div class="k"><div><div class="l">Ingresos ${esc(d.mes)}</div><div class="v">${m$(d.totIng)}</div><div class="rut">${esc(d.mesAnt)}: ${m$(d.totIngPrev)}</div></div>
+<div><div class="l">Egresos ${esc(d.mes)}</div><div class="v">${m$(d.totEgr)}</div><div class="rut">${esc(d.mesAnt)}: ${m$(d.totEgrPrev)}</div></div>
+<div><div class="l">Saldo final</div><div class="v">${m$(d.saldoFin)}</div><div class="rut">Inicial: ${m$(d.saldoIni)}</div></div>
+<div><div class="l">Líneas explicadas</div><div class="v">${items.length}</div><div class="rut">diferencias desde ${m$(opts.umbral || 0)}</div></div></div>
+<p class="intro">Colores: verde = favorable a la caja (más ingreso o menos egreso), rojo = desfavorable. Se explican las líneas del cuadro comparativo cuya diferencia contra el mes anterior es igual o mayor a ${m$(opts.umbral || 0)} (o de al menos un 30% de ese monto si la variación supera el 50%). El texto se arma con el detalle de las hojas del flujo${opts.conRcv ? " y el libro de ventas" : ""}; la explicación de contabilidad la agrega Kevin.</p>
+${ing.length ? `<h2>Ingresos</h2>${ing.map(card).join("")}` : ""}${egr.length ? `<h2>Egresos</h2>${egr.map(card).join("")}` : ""}
+<div class="note">Fuente: libro FLUJO 2026 (suma diaria de cada línea y hojas de detalle por fecha de pago)${opts.conRcv ? " y libro de ventas RCV del SII" : ""}. Generado el ${new Date().toLocaleDateString("es-CL")}.</div>
+</div></body></html>`;
+  }
+
+  const api = { buildDifHTML, buildHTML, toWorkbook, filtrar };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.NTReport = api;
 })(typeof window !== "undefined" ? window : globalThis);
 </script>
@@ -1107,7 +1313,29 @@ const ASSETS = {"logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAADQC
   });
   $("selMes").addEventListener("change", invalidate);
   function invalidate(){ DATA=null; REP=null; $("btnPptx").disabled = true; if(WB) $("out").innerHTML = "";
-    ["btnInfHtml","btnInfPrint","btnInfXlsx"].forEach(id=>$(id).disabled=true); $("infFrame").style.display="none"; $("infCats").innerHTML=""; }
+    ["btnInfHtml","btnInfPrint","btnInfXlsx","btnDifHtml","btnDifPrint"].forEach(id=>$(id).disabled=true); DIF=null; $("difList").innerHTML=""; $("infFrame").style.display="none"; $("infCats").innerHTML=""; }
+  // ---------- explicación de diferencias
+  let DIF = null; const COM_KEY = "nt_dif_com_v1";
+  function getCom(){ try{ return JSON.parse(localStorage.getItem(COM_KEY)||"{}"); }catch(e){ return {}; } }
+  function setCom(o){ try{ localStorage.setItem(COM_KEY, JSON.stringify(o)); }catch(e){} }
+  const escH = (s)=>String(s).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  function difKey(it){ return `${DATA.y}-${DATA.m}|${it.tipo}|${it.sec}|${it.linea}`; }
+  function difHTML(){ return window.NTReport.buildDifHTML(DIF, DATA, {comentarios: getCom(), logo: ASSETS.logo, umbral: Number($("difUmbral").value)||0, conRcv: !!RCV}); }
+  function renderDif(){
+    if(!DIF) return; const com = getCom();
+    const fm = (v)=> (v<0?"−$ ":"$ ") + C.fmt(Math.abs(v));
+    $("difList").innerHTML = DIF.length ? DIF.map((it,i)=>`<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>${escH(it.linea)} <span class="small">· ${escH(it.tipo)} · ${escH(it.sec)}</span></b>
+      <span style="font-variant-numeric:tabular-nums">${fm(it.mes)} vs ${fm(it.ant)} · <b style="color:${(it.tipo==="Egresos"?-it.dif:it.dif)<0?"var(--red)":"var(--green)"}">${fm(it.dif)}</b></span></div>
+      <div style="font-size:14px;margin:6px 0">${escH(it.texto)}</div>${it.notas.map(n=>`<div class="warn" style="margin:4px 0">${escH(n)}</div>`).join("")}
+      <label style="margin-top:6px">Explicación de contabilidad (opcional)</label><textarea data-i="${i}" rows="2" style="width:100%;font:inherit;padding:6px 8px;border:1px solid #cfc8bf;border-radius:7px">${escH(com[difKey(it)]||"")}</textarea></div>`).join("")
+      : `<div class="ok">No hay diferencias sobre el umbral.</div>`;
+    $("difList").querySelectorAll("textarea").forEach(ta=>ta.addEventListener("input",()=>{ const c=getCom(); c[difKey(DIF[ta.dataset.i])]=ta.value; setCom(c); }));
+    ["btnDifHtml","btnDifPrint"].forEach(id=>$(id).disabled=false);
+  }
+  $("difUmbral").addEventListener("change", ()=>{ if(DATA){ DIF = C.explicarDiferencias(WB, DATA, {rcv: RCV, umbral: Number($("difUmbral").value)||0}); renderDif(); } });
+  $("btnDifHtml").addEventListener("click", ()=> dl(new Blob([difHTML()],{type:"text/html"}), `Explicación diferencias ${DATA.mes} ${DATA.y}.html`));
+  $("btnDifPrint").addEventListener("click", ()=>{ const fr=$("difFrame"); fr.onload=()=>{ fr.contentWindow.focus(); fr.contentWindow.print(); }; fr.srcdoc = difHTML(); });
   // ---------- informe de proveedores
   let REP = null; const EXCL_KEY = "nt_inf_excl_v1";
   function getExcl(){ try{ return JSON.parse(localStorage.getItem(EXCL_KEY)||"[]"); }catch(e){ return []; } }
@@ -1159,6 +1387,7 @@ const ASSETS = {"logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAADQC
       h += `<div class="small" style="margin:6px 0 10px">Fondos fijos ${f(d.ffTotal)} · Fondos por rendir ${f(d.frTotal)} · Cheques a fecha: ${d.cheques.length} (mes) / ${d.chequesSig.length} (mes siguiente) · OC sin factura: ${d.oc.filter(r=>r[8]===null||r[8]==="").length}</div>`;
       h += `<details open><summary>Cuadro comparativo ${d.mesAnt} – ${d.mes}</summary><div class="cols" style="margin-top:10px"><div class="tablewrap">${compTable(d.ing,d.ingPrev,d)}</div><div class="tablewrap">${compTable(d.egr,d.egrPrev,d)}</div></div></details>`;
       $("out").innerHTML = h; $("btnPptx").disabled = false;
+      try{ DIF = C.explicarDiferencias(WB, d, {rcv: RCV, umbral: Number($("difUmbral").value)||0}); renderDif(); }catch(e){ console.error(e); $("difList").innerHTML = `<div class="err">No pude armar la explicación de diferencias: ${e.message}</div>`; }
       try{ REP = C.informeProveedores(WB, y, m); renderInforme(); }catch(e){ console.error(e); $("infCats").innerHTML = `<div class="err">No pude armar el informe de proveedores: ${e.message}</div>`; }
     }catch(e){ console.error(e); $("out").innerHTML = `<div class="err">Error al leer el mes: ${e.message}</div>`; }
   });
