@@ -190,7 +190,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     "RODRIGO HERNANDEZ": ["SPENCE", 4400000, "GASTOS SPENCE"],
     "EDUARDO SANTIBAÑEZ": ["MEL", 500000, "GASTOS MEL"],
     "MILKO VARGAS": ["MEL", 250000, "GASTOS MEL"],
-    "MAX ARCIENEGA": ["ADM", 0, "GASTOS ADMINISTRACION"],
+    "JOEL BARRIENTOS": ["ADM", 200000, "GASTOS ADMINISTRACION"],
   };
   // Rodrigo Campos: rendiciones bajo el umbral -> fondo chico CMLB; desde el umbral -> fondo grande RSI.
   const RC_DEFAULT = { umbral: 1000000, fondoCMLB: 2000000 };
@@ -1028,6 +1028,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         for (const p of names) {
           const rws = people[p] || [];
           const rend = rws.filter((r) => r.tipo === "FF").reduce((a, r) => a + r.monto, 0);
+          if (!rend) continue;   // sin real rendido en el mes: no se muestra en el análisis
           let monto, det;
           if (p === "RODRIGO CAMPOS" && code === "CMLB") { if (!rws.length) continue; monto = d.rc.fondoCMLB; det = "GASTOS CMLB"; }
           else { const f = d.fondosMaestro[p] || [code, 0, ""]; monto = f[1]; det = f[2]; }
@@ -1328,7 +1329,7 @@ const ASSETS = {"logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAADQC
 
   // ---------- configuración persistente
   const LS = "nt_flujo_cfg_v1";
-  function loadCfg(){ try{ const j = JSON.parse(localStorage.getItem(LS)||"null"); if(j&&j.fondos){ for(const [k,v] of Object.entries(C.FONDOS_DEFAULT)) if(!(k in j.fondos)) j.fondos[k]=v.slice(); return j; } }catch(e){} return {fondos: JSON.parse(JSON.stringify(C.FONDOS_DEFAULT)), rc: Object.assign({}, C.RC_DEFAULT)}; }
+  function loadCfg(){ try{ const j = JSON.parse(localStorage.getItem(LS)||"null"); if(j&&j.fondos){ delete j.fondos["MAX ARCIENEGA"]; for(const [k,v] of Object.entries(C.FONDOS_DEFAULT)) if(!(k in j.fondos)) j.fondos[k]=v.slice(); return j; } }catch(e){} return {fondos: JSON.parse(JSON.stringify(C.FONDOS_DEFAULT)), rc: Object.assign({}, C.RC_DEFAULT)}; }
   function saveCfg(){ try{ localStorage.setItem(LS, JSON.stringify(CFG)); }catch(e){} }
   let CFG = loadCfg();
   function renderCfg(){
