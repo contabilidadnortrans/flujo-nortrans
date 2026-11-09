@@ -189,6 +189,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     "YAMIL GONZALEZ": ["SPENCE", 14400000, "GASTOS SPENCE"],
     "RODRIGO HERNANDEZ": ["SPENCE", 4400000, "GASTOS SPENCE"],
     "EDUARDO SANTIBAÑEZ": ["MEL", 500000, "GASTOS MEL"],
+    "MILKO VARGAS": ["MEL", 250000, "GASTOS MEL"],
+    "MAX ARCIENEGA": ["ADM", 0, "GASTOS ADMINISTRACION"],
   };
   // Rodrigo Campos: rendiciones bajo el umbral -> fondo chico CMLB; desde el umbral -> fondo grande RSI.
   const RC_DEFAULT = { umbral: 1000000, fondoCMLB: 2000000 };
@@ -459,7 +461,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const chq = sheet(wb, "Cheques");
     d.cheques = rowsIn(chq, 4, y, m);
     d.chequesSig = rowsIn(chq, 4, ny, nm);
-    d.oc = rowsIn(sheet(wb, "ORDENES DE COMPRAS"), 2, y, m);
+    { const OC = sheet(wb, "ORDENES DE COMPRAS");
+      d.oc = rowsIn(OC, 2, y, m);
+      let fc = -1;
+      for (let r = 0; r < Math.min(OC.length, 5) && fc < 0; r++)
+        (OC[r] || []).forEach((v, c) => { if (fc < 0 && /FACT/i.test(String(v == null ? "" : v))) fc = c; });
+      if (fc < 0) fc = 8;
+      const vacio = (v) => v === null || v === undefined || /^[\s\-–—0.]*$/.test(String(v));
+      // Lámina 7: solo aperturas de cuenta (OC) que aún no tienen factura asociada
+      d.ocSinFactura = d.oc.filter((r) => vacio(r[fc]));
+      d.ocColFactura = fc; }
     d.arriendos = rowsIn(sheet(wb, "Arriendos"), 4, y, m);
     d.directorio = rowsIn(S.dir, 4, y, m);
     d.aporte = c.aporte;
@@ -521,6 +532,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const flujo = { MEL: ing["MEL"], SPENCE: (ing["Spence Interno"] || 0) + (ing["Spence Externo"] || 0), Aramark: ing["Aramark"],
       "Mantos Group": ing["Mantos Group"], Sodexo: ing["Sodexo"], "Lomas Bayas": ing["Lomas Bayas"], CMCC: ing["CMCC"],
       "Komatsu CMLB": ing["Komatsu CMLB"] };
+    // Ventas a empresas relacionadas que no van en la lámina 19
+    const EXCLUIR = /TRANSMAT/i;
+    rcv = Object.fromEntries(Object.entries(rcv).filter(([k, e]) => !EXCLUIR.test(k) && !EXCLUIR.test((e && e.nombre) || "")));
     const keys = new Set([...Object.keys(rcv), ...Object.keys(flujo).filter((k) => flujo[k])]);
     return [...keys].sort((a, b) => ((rcv[b] || {}).monto || 0) - ((rcv[a] || {}).monto || 0)).map((k) => {
       const fac = (rcv[k] || {}).monto || 0;
@@ -950,7 +964,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       const s = base("Apertura de proveedores con OC", { sub: "Apertura cuentas OC Proveedores" });
       const rows = [[H("RUT"), H("PROVEEDOR"), H("FECHA PAGO", "center"), H("OC", "center"), H("MONTO", "right"), H("N° EGRESO", "center"), H("DETALLE")]];
       let t = 0;
-      d.oc.filter((r) => r[8] === null || r[8] === "").sort((a, b) => a[2] - b[2]).forEach((r, i) => {
+      (d.ocSinFactura || []).slice().sort((a, b) => a[2] - b[2]).forEach((r, i) => {
         const z = i % 2 ? ZEBRA : undefined;
         let det = String(r[9] || "").split(/\s+/).join(" ");
         if (det.length > 80) det = det.slice(0, 77).trim() + "...";
@@ -1314,7 +1328,7 @@ const ASSETS = {"logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAADQC
 
   // ---------- configuración persistente
   const LS = "nt_flujo_cfg_v1";
-  function loadCfg(){ try{ const j = JSON.parse(localStorage.getItem(LS)||"null"); if(j&&j.fondos) return j; }catch(e){} return {fondos: JSON.parse(JSON.stringify(C.FONDOS_DEFAULT)), rc: Object.assign({}, C.RC_DEFAULT)}; }
+  function loadCfg(){ try{ const j = JSON.parse(localStorage.getItem(LS)||"null"); if(j&&j.fondos){ for(const [k,v] of Object.entries(C.FONDOS_DEFAULT)) if(!(k in j.fondos)) j.fondos[k]=v.slice(); return j; } }catch(e){} return {fondos: JSON.parse(JSON.stringify(C.FONDOS_DEFAULT)), rc: Object.assign({}, C.RC_DEFAULT)}; }
   function saveCfg(){ try{ localStorage.setItem(LS, JSON.stringify(CFG)); }catch(e){} }
   let CFG = loadCfg();
   function renderCfg(){
@@ -1446,7 +1460,7 @@ const ASSETS = {"logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAADQC
       sugg.forEach(w=>h += `<div class="warn sug">${w}</div>`);
       other.forEach(w=>h += `<div class="warn">${w}</div>`);
       if(!RCV) h += `<div class="warn">Sin libro de ventas: la lámina 19 mostrará los ingresos por cliente sin la comparación con lo facturado.</div>`;
-      h += `<div class="small" style="margin:6px 0 10px">Fondos fijos ${f(d.ffTotal)} · Fondos por rendir ${f(d.frTotal)} · Cheques a fecha: ${d.cheques.length} (mes) / ${d.chequesSig.length} (mes siguiente) · OC sin factura: ${d.oc.filter(r=>r[8]===null||r[8]==="").length}</div>`;
+      h += `<div class="small" style="margin:6px 0 10px">Fondos fijos ${f(d.ffTotal)} · Fondos por rendir ${f(d.frTotal)} · Cheques a fecha: ${d.cheques.length} (mes) / ${d.chequesSig.length} (mes siguiente) · OC sin factura: ${(d.ocSinFactura||[]).length}</div>`;
       h += `<details open><summary>Cuadro comparativo ${d.mesAnt} – ${d.mes}</summary><div class="cols" style="margin-top:10px"><div class="tablewrap">${compTable(d.ing,d.ingPrev,d)}</div><div class="tablewrap">${compTable(d.egr,d.egrPrev,d)}</div></div></details>`;
       $("out").innerHTML = h; $("btnPptx").disabled = false;
       try{ DIF = C.explicarDiferencias(WB, d, {rcv: RCV, umbral: Number($("difUmbral").value)||0}); renderDif(); }catch(e){ console.error(e); $("difList").innerHTML = `<div class="err">No pude armar la explicación de diferencias: ${e.message}</div>`; }
