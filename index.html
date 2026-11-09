@@ -226,41 +226,98 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   const rowsIn = (A, dcol, y, m) => A.slice(1).filter((r) => r && inMonth(r[dcol], y, m));
 
+  // ---- FLUJO DE CAJA: la estructura se detecta sola (no depende de columnas o filas fijas).
+  // Columna de nombres = donde está "Total Ingresos". Cada bloque (ingresos / egresos) va desde la fila
+  // de encabezado (la que tiene los nombres de meses a la izquierda) hasta su fila "Total". Las fechas
+  // diarias están en la fila de encabezado, a la derecha de la columna de nombres.
+  const normTxt = (v) => String(v == null ? "" : v).trim().toUpperCase();
+  const MES_UP = MESES.map((s) => s.toUpperCase());
+  const LAYOUTS = new WeakMap();
+  function flujoLayout(F) {
+    if (LAYOUTS.has(F)) return LAYOUTS.get(F);
+    let lc = -1, ti = -1, te = -1;
+    for (let r = 0; r < Math.min(F.length, 300); r++) {
+      const row = F[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const t = normTxt(row[c]);
+        if (t === "TOTAL INGRESOS" && ti < 0) { ti = r; lc = c; }
+        else if (t === "TOTAL EGRESOS" && te < 0 && lc >= 0 && c === lc) te = r;
+      }
+      if (ti >= 0 && te >= 0) break;
+    }
+    if (ti < 0 || te < 0)
+      throw new Error('No encuentro las filas "Total Ingresos" y "Total Egresos" (en la misma columna) en la hoja FLUJO DE CAJA.');
+    const nDates = (r) => { const row = F[r] || []; let n = 0; for (let c = lc + 1; c < row.length; c++) if (toDate(row[c])) n++; return n; };
+    const nMeses = (r) => { const row = F[r] || []; let n = 0; for (let c = 0; c < lc; c++) if (MES_UP.indexOf(normTxt(row[c])) > 0) n++; return n; };
+    const header = (from, to, cual) => {
+      let r = -1;
+      for (let k = from; k >= to; k--) if (nMeses(k) >= 3) { r = k; break; }
+      if (r < 0) for (let k = from; k >= to; k--) if (normTxt((F[k] || [])[lc]) === cual) { r = k; break; }
+      if (r < 0) throw new Error(`No encuentro el encabezado del bloque ${cual} en la hoja FLUJO DE CAJA.`);
+      // fila con las fechas diarias: la del encabezado, o la vecina si las fechas quedaron una fila más arriba/abajo
+      let dr = r;
+      for (const k of [r, r - 1, r + 1]) if (k >= 0 && k !== ti && k !== te && nDates(k) > nDates(dr)) dr = k;
+      return { hdr: dr, a: Math.max(r, dr) + 1 };
+    };
+    const hi = header(ti - 1, 0, "INGRESOS"), he = header(te - 1, ti + 1, "EGRESOS");
+    const mc = {};
+    for (const r of [hi.a - 1, hi.a - 2, he.a - 1, he.a - 2]) {
+      const row = F[r] || [];
+      for (let c = 0; c < lc; c++) { const k = MES_UP.indexOf(normTxt(row[c])); if (k > 0 && !(k in mc)) mc[k] = c; }
+    }
+    const L = { lc, ti, te, blocks: [[hi.hdr, hi.a, ti], [he.hdr, he.a, te]], mc };
+    LAYOUTS.set(F, L);
+    return L;
+  }
+  function flujoRow(F, key) {
+    const L = flujoLayout(F);
+    for (const [, a, b] of L.blocks) for (let r = a; r <= b; r++) if (normTxt((F[r] || [])[L.lc]) === key) return F[r];
+    return null;
+  }
+  function flujoDailyCols(F, hdr, y, m) {
+    const L = flujoLayout(F), cols = [];
+    (F[hdr] || []).forEach((v, c) => { if (c > L.lc && inMonth(v, y, m)) cols.push(c); });
+    return cols;
+  }
+
   // ---- FLUJO DE CAJA: suma de columnas diarias del mes
   function flujoDaily(F, y, m) {
+    const L = flujoLayout(F);
     const out = {};
-    for (const [hdr, a, b] of [[2, 3, 20], [23, 24, 42]]) {
-      const H = F[hdr] || [];
-      const cols = [];
-      H.forEach((v, c) => { if (c > 10 && inMonth(v, y, m)) cols.push(c); });
+    for (const [hdr, a, b] of L.blocks) {
+      const cols = flujoDailyCols(F, hdr, y, m);
       for (let r = a; r <= b; r++) {
         const row = F[r] || [];
-        const name = row[10];
+        const name = row[L.lc];
         if (!name) continue;
-        out[String(name).trim().toUpperCase()] = cols.reduce((s, c) => s + num(row[c]), 0);
+        out[normTxt(name)] = cols.reduce((s, c) => s + num(row[c]), 0);
       }
     }
     return out;
   }
   function flujoMonthCol(F, m) {
+    const L = flujoLayout(F);
     const out = {};
-    for (let r = 3; r <= 42; r++) {
+    if (!(m in L.mc)) return out;
+    for (const [, a, b] of L.blocks) for (let r = a; r <= b; r++) {
       const row = F[r] || [];
-      if (row[10]) out[String(row[10]).trim().toUpperCase()] = num(row[m - 1]);
+      if (row[L.lc]) out[normTxt(row[L.lc])] = num(row[L.mc[m]]);
     }
     return out;
   }
   function availableMonths(wb) {
     const F = sheet(wb, "FLUJO DE CAJA");
+    const L = flujoLayout(F);
+    const [hdr, a, b] = L.blocks[0];
     const set = new Map();
-    (F[2] || []).forEach((v, c) => {
-      if (c <= 10) return;
+    (F[hdr] || []).forEach((v, c) => {
+      if (c <= L.lc) return;
       const d = toDate(v);
       if (!d) return;
       const k = d.y * 100 + d.m;
       // mes con algún movimiento
       let has = false;
-      for (let r = 3; r <= 20 && !has; r++) if (num((F[r] || [])[c])) has = true;
+      for (let r = a; r <= b && !has; r++) if (num((F[r] || [])[c])) has = true;
       if (has) set.set(k, { y: d.y, m: d.m });
     });
     return [...set.values()].sort((a, b) => a.y * 100 + a.m - (b.y * 100 + b.m));
@@ -376,6 +433,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     const nm = m < 12 ? m + 1 : 1, ny = m < 12 ? y : y + 1;
     const cur = flujoDaily(F, y, m), prev = flujoDaily(F, py, pm);
     const d = { y, m, mes: MESES[m], mesAnt: MESES[pm], mesSig: MESES[nm], warnings: [] };
+    { const L = flujoLayout(F);
+      for (const [hdr, , , nom] of [[L.blocks[0][0], 0, 0, "ingresos"], [L.blocks[1][0], 0, 0, "egresos"]])
+        if (!flujoDailyCols(F, hdr, y, m).length) d.warnings.push(`FLUJO DE CAJA: no encontré columnas diarias con fecha de ${MESES[m].toLowerCase()} en el bloque de ${nom} (fila ${hdr + 1}). Revisa que las fechas sean fechas de Excel y no texto.`); }
 
     const col = y === 2026 ? flujoMonthCol(F, m) : {};
     for (const k in cur) {
@@ -408,9 +468,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       .reduce((s, r) => s + num(r[3]), 0);
     d.prestamoIng = num(cur["PRESTAMO DIRECTORIO"]);
     d.prestamoDet = [];
-    (F[2] || []).forEach((v, c2) => {
-      if (c2 > 10 && inMonth(v, y, m)) { const val = num((F[19] || [])[c2]); if (val) d.prestamoDet.push([toDate(v), val]); }
-    });
+    { const L = flujoLayout(F), pr = flujoRow(F, "PRESTAMO DIRECTORIO") || [];
+      (F[L.blocks[0][0]] || []).forEach((v, c2) => {
+        if (c2 > L.lc && inMonth(v, y, m)) { const val = num(pr[c2]); if (val) d.prestamoDet.push([toDate(v), val]); }
+      }); }
 
     // Fondos
     const ff = {}; SEDES.forEach(([k]) => (ff[k] = {}));
@@ -586,12 +647,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     "Sodexo": "Sodexo", "Spence Externo": "SPENCE", "Spence Interno": "SPENCE" };
 
   function flujoDias(F, y, m, key, egreso) {
-    const [hdr, a, b] = egreso ? [23, 24, 42] : [2, 3, 20];
+    const L = flujoLayout(F);
+    const [hdr, a, b] = L.blocks[egreso ? 1 : 0];
     let row = null;
-    for (let r = a; r <= b; r++) if (String((F[r] || [])[10] || "").trim().toUpperCase() === key) row = F[r];
+    for (let r = a; r <= b; r++) if (normTxt((F[r] || [])[L.lc]) === key) row = F[r];
     if (!row) return [];
     const out = [];
-    (F[hdr] || []).forEach((v, c) => { if (c > 10 && inMonth(v, y, m)) { const x = num(row[c]); if (x) out.push([toDate(v), x]); } });
+    (F[hdr] || []).forEach((v, c) => { if (c > L.lc && inMonth(v, y, m)) { const x = num(row[c]); if (x) out.push([toDate(v), x]); } });
     return out;
   }
   function detalle(wb, cache, spec, y, m) {
