@@ -870,7 +870,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         o = o || {};
         const n = Math.abs(v) < 0.5 ? "-" : fmtN(v);
         let color = BLACK, fill;
-        if (o.diff) { if (v < -0.5) { color = XL_RED; if (!o.total) fill = XL_PINK; } else color = o.total ? XL_CYAN : XL_BLUE; }
+        if (o.diff) { if (o.inv ? v > 0.5 : v < -0.5) { color = XL_RED; if (!o.total) fill = XL_PINK; } else color = o.total ? XL_CYAN : XL_BLUE; }
         const b = o.border || "";
         return [X("$", { bold: o.bold, border: b, bcolor: BLACK, bw: o.bw, color, fill, mlr: 0.02 }),
           X(n, { bold: o.bold, align: "right", border: b, bcolor: BLACK, bw: o.bw, color, fill, mlr: 0.03 })];
@@ -882,7 +882,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           ...amt(v - pv, Object.assign({}, o, { diff: true }))];
       };
       const fin = new Date(d.y, d.m, 0).getDate();
-      const block = (secs, prev, totLabel, tot, totPrev, top) => {
+      const block = (secs, prev, totLabel, tot, totPrev, top, inv) => {
         const rows = [[X("", { border: "B", bcolor: BLACK }), X(d.mes, { bold: true, align: "center", border: "B", bcolor: BLACK, colspan: 2 }),
           X(d.mesAnt, { bold: true, align: "center", border: "B", bcolor: BLACK, colspan: 2 }),
           X("Diferencias", { bold: true, align: "center", border: "B", bcolor: BLACK, colspan: 2 })]];
@@ -894,18 +894,19 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           for (const [n, v] of items) {
             const pv = pmap[n] || 0;
             if (n === "Servicios Especiales" && Math.abs(v) < 0.5 && Math.abs(pv) < 0.5) continue;
-            rows.push(line(n, v, pv)); st += v; sp += pv;
+            rows.push(line(n, v, pv, { inv })); st += v; sp += pv;
           }
-          rows.push(line("Total " + sec, st, sp, { bold: true, border: "TB", bw: 1, total: true }));
+          rows.push(line("Total " + sec, st, sp, { bold: true, border: "TB", bw: 1, total: true, inv }));
           rows.push(EMPTY());
         });
-        rows.push(line(totLabel, tot, totPrev, { bold: true, border: "TB", bw: 1, total: true }));
+        rows.push(line(totLabel, tot, totPrev, { bold: true, border: "TB", bw: 1, total: true, inv }));
         return rows;
       };
       const left = block(d.ing, d.ingPrev, `Monto a Administrar en ${d.mes} ${d.y}`, d.totIng, d.totIngPrev,
         [[X(`Saldo Inicial 01 de ${d.mes} ${d.y}`, { bold: true, border: "TB", bcolor: BLACK }), ...amt(d.saldoIni, { bold: true, border: "TB" }),
           X("", { border: "TB", bcolor: BLACK, colspan: 4 })]]);
-      const right = block(d.egr, d.egrPrev, `Monto Egresos ${d.mes} ${d.y}`, d.totEgr, d.totEgrPrev, []);
+      // En egresos los colores van al revés: gastar más que el mes anterior se marca en rojo, gastar menos en azul
+      const right = block(d.egr, d.egrPrev, `Monto Egresos ${d.mes} ${d.y}`, d.totEgr, d.totEgrPrev, [], true);
       right.push(EMPTY());
       right.push([X(`Saldo final al ${fin} de ${d.mes} ${d.y}`, { bold: true, border: "TB", bcolor: BLACK, bw: 1 }),
         ...amt(d.saldoFin, { bold: true, border: "TB", bw: 1 }), X("", { border: "TB", bcolor: BLACK, bw: 1, colspan: 4 })]);
